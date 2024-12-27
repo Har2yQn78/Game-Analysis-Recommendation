@@ -1,39 +1,43 @@
+import os
+import pandas as pd
+import numpy as np
 import tensorflow as tf
 import tensorflow_recommenders as tfrs
+from utils import create_interaction_matrix, run_model, create_user_dict, create_item_dict
 
+os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
 
-class RecommenderModel(tfrs.Model):
-    def __init__(self, user_model, item_model, task):
-        super().__init__()
-        self.user_model = user_model
-        self.item_model = item_model
-        self.task = task
+os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
-    def compute_loss(self, features, training=False):
-        user_embeddings = self.user_model(features["user_id"])
-        item_embeddings = self.item_model(features["item_id"])
-        return self.task(user_embeddings, item_embeddings)
+# Load Data
+recdata_path = os.path.join('..', 'data', 'recdata.csv')
+gamesdata_path = os.path.join('..', 'data', 'gamesdata.csv')
 
-def run_model(interactions, embedding_dim=32, epoch=30, batch_size=128):
-    user_ids = interactions.index.tolist()
-    item_ids = interactions.columns.tolist()
-    ratings = interactions.values
+recdata = pd.read_csv(recdata_path, index_col=0)
+recdata = recdata.rename(columns={'variable': 'id', 'value': 'owned'})
+gamesdata = pd.read_csv(gamesdata_path, index_col=0)
 
-    user_model = tf.keras.Sequential([tf.keras.layers.StringLookup(vocabulary=user_ids), tf.keras.layers.Embedding(len(user_ids) + 1, embedding_dim)])
-    item_model = tf.keras.Sequential([tf.keras.layers.StringLookup(vocabulary=item_ids), tf.keras.layers.Embedding(len(item_ids) + 1, embedding_dim)])
+interactions = create_interaction_matrix(df=recdata, user_col='uid', item_col='id', rating_col='owned')
 
-    task = tfrs.tasks.Retrieval(metrics=tfrs.metrics.FactorizedTopK(candidates=item_ids))
+interactions.index = interactions.index.astype(str)
+interactions.columns = interactions.columns.astype(str)
 
-    model = RecommenderModel(user_model, item_model, task)
-    model.compile(optimizer=tf.keras.optimizers.Adagrad(learning_rate=0.1))
+# Train the model
+recommender_model = run_model(interactions=interactions, embedding_dim=32, epoch=30, batch_size=128)
 
-    users = np.array([user for user in interactions.index for _ in interactions.columns])
-    items = np.array([item for _ in interactions.index for item in interactions.columns])
-    ratings = np.array([rating for row in interactions.values for rating in row])
+save_dir = os.path.join('..', 'models')
+os.makedirs(save_dir, exist_ok=True)
 
-    dataset = tf.data.Dataset.from_tensor_slices({"user_id": users, "item_id": items, "rating": ratings})
-    dataset = dataset.shuffle(len(users)).batch(batch_size).cache()
+dummy_input = tf.constant([interactions.index[0]])
+_ = recommender_model.user_model(dummy_input)
+user_embeddings = recommender_model.user_model.layers[1].embeddings.numpy()
 
-    model.fit(dataset, epochs=epoch)
+dummy_input = tf.constant([interactions.columns[0]])
+_ = recommender_model.item_model(dummy_input)
+item_embeddings = recommender_model.item_model.layers[1].embeddings.numpy()
 
-    return model
+np.save(os.path.join(save_dir, 'user_embeddings.npy'), user_embeddings)
+np.save(os.path.join(save_dir, 'item_embeddings.npy'), item_embeddings)
+np.save(os.path.join(save_dir, 'user_ids.npy'), np.array(interactions.index.tolist(), dtype=object))
+np.save(os.path.join(save_dir, 'item_ids.npy'), np.array(interactions.columns.tolist(), dtype=object))
+np.save(os.path.join(save_dir, 'embedding_dim.npy'), np.array([32], dtype=np.int32))
