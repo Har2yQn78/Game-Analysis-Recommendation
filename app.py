@@ -10,6 +10,10 @@ from src.utils import (create_interaction_matrix, create_user_dict,
 recdata = pd.read_csv('data/recdata.csv', index_col=0)
 recdata = recdata.rename(columns={'variable': 'id', 'value': 'owned'})
 gamesdata = pd.read_csv('data/gamesdata.csv', index_col=0)
+numgames = pd.read_csv('data/numgames.csv', header=None, names=['uid', 'user_id', 'items_count'])
+
+# Create user number to user_id name mapping
+user_mapping = dict(zip(numgames['uid'], numgames['user_id']))
 
 interactions, user_ids, item_ids = create_interaction_matrix(
     df=recdata, user_col='uid', item_col='id', rating_col='owned'
@@ -66,9 +70,9 @@ title_to_id = {v: k for k, v in games_dict.items()}
 tab1, tab2 = st.tabs(["User-based Recommendations", "Game-based Recommendations"])
 
 with tab1:
-    user_options = [f"User {uid}" for uid in sorted(user_ids)]
+    user_options = [f"User {user_mapping[uid]}" for uid in sorted(user_ids)]
     selected_user = st.selectbox('Select User', user_options)
-    user_id = int(selected_user.split()[1])
+    user_id = next(uid for uid, name in user_mapping.items() if name == selected_user.split()[1])
 
     if st.button('Get User Recommendations'):
         recommendations = get_recs(

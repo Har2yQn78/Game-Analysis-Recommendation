@@ -3,10 +3,12 @@ import pandas as pd
 import numpy as np
 import tensorflow as tf
 import tensorflow_recommenders as tfrs
-from utils import create_interaction_matrix, run_model, create_user_dict, create_item_dict
+from utils_train import create_interaction_matrix, run_model, create_user_dict, create_item_dict
 
+# Set the environment variable to avoid oneDNN custom operations warning
 os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
 
+# Ensure the current working directory is correct
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 # Load Data
@@ -17,17 +19,21 @@ recdata = pd.read_csv(recdata_path, index_col=0)
 recdata = recdata.rename(columns={'variable': 'id', 'value': 'owned'})
 gamesdata = pd.read_csv(gamesdata_path, index_col=0)
 
+# Create interaction matrix
 interactions = create_interaction_matrix(df=recdata, user_col='uid', item_col='id', rating_col='owned')
 
+# Convert user IDs and item IDs to strings
 interactions.index = interactions.index.astype(str)
 interactions.columns = interactions.columns.astype(str)
 
 # Train the model
 recommender_model = run_model(interactions=interactions, embedding_dim=32, epoch=30, batch_size=128)
 
+# Create directory if it doesn't exist
 save_dir = os.path.join('..', 'models')
 os.makedirs(save_dir, exist_ok=True)
 
+# Save embeddings
 dummy_input = tf.constant([interactions.index[0]])
 _ = recommender_model.user_model(dummy_input)
 user_embeddings = recommender_model.user_model.layers[1].embeddings.numpy()
