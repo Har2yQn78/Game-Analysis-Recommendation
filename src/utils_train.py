@@ -1,98 +1,125 @@
 import pandas as pd
 import numpy as np
-import tensorflow as tf
-import tensorflow_recommenders as tfrs
-
-from sklearn.metrics.pairwise import cosine_similarity
-
-
-def create_interaction_matrix(df, user_col, item_col, rating_col, norm=False, threshold=None):
-    interactions = df.groupby([user_col, item_col])[rating_col] \
-        .sum().unstack().reset_index() \
-        .fillna(0).set_index(user_col)
-    if norm:
-        interactions = interactions.applymap(lambda x: 1 if x > threshold else 0)
-    return interactions
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from tqdm import tqdm
+from torch.utils.data import DataLoader, Dataset
 
 
-def create_user_dict(interactions):
-    user_id = list(interactions.index)
-    user_dict = {i: idx for idx, i in enumerate(user_id)}
-    return user_dict
+class InteractionDataset(Dataset):
+    def __init__(self, data, user_col, item_col, rating_col):
+        self.data = data
+        self.user_col = user_col
+        self.item_col = item_col
+        self.rating_col = rating_col
+        self.user_dict = {user: idx for idx, user in enumerate(data[user_col].unique())}
+        self.item_dict = {item: idx for idx, item in enumerate(data[item_col].unique())}
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        row = self.data.iloc[idx]
+        user = self.user_dict[row[self.user_col]]
+        item = self.item_dict[row[self.item_col]]
+        rating = row[self.rating_col]
+        return user, item, rating
 
 
-def create_item_dict(df, id_col, name_col):
-    item_dict = {df.loc[i, id_col]: df.loc[i, name_col] for i in range(df.shape[0])}
-    return item_dict
+def create_batch_interaction_matrix(data, user_col, item_col, rating_col):
+    user_dict = {user: idx for idx, user in enumerate(data[user_col].unique())}
+    item_dict = {item: idx for idx, item in enumerate(data[item_col].unique())}
+    return user_dict, item_dict
 
 
-class RecommenderModel(tfrs.Model):
-    def __init__(self, user_model, item_model):
-        super().__init__()
-        self.user_model = user_model
-        self.item_model = item_model
-        self.task = tfrs.tasks.Retrieval()
+class RecommenderModel(nn.Module):
+    def __init__(self, num_users, num_items, embedding_dim):
+        super(RecommenderModel, self).__init__()
+        self.user_embedding = nn.Embedding(num_users, embedding_dim)
+        self.item_embedding = nn.Embedding(num_items, embedding_dim)
+        self.fc = nn.Linear(embedding_dim * 2, 1)
 
-    def compute_loss(self, features, training=False):
-        user_embeddings = self.user_model(features["user_id"])
-        item_embeddings = self.item_model(features["item_id"])
-
-        return self.task(
-            user_embeddings,
-            item_embeddings,
-            compute_metrics=not training
-        )
+    def forward(self, user_ids, item_ids):
+        user_emb = self.user_embedding(user_ids)
+        item_emb = self.item_embedding(item_ids)
+        concat_emb = torch.cat([user_emb, item_emb], dim=1)
+        output = self.fc(concat_emb)
+        return output
 
 
-def run_model(interactions, embedding_dim=32, epoch=30, batch_size=128):
-    user_ids = interactions.index.tolist()
-    item_ids = interactions.columns.tolist()
+def run_model(train_data, val_data, user_col, item_col, rating_col, embedding_dim=32, max_epochs=2, batch_size=128,
+              patience=1, device="cpu"):
+    user_dict, item_dict = create_batch_interaction_matrix(train_data, user_col, item_col, rating_col)
+    num_users = len(user_dict)
+    num_items = len(item_dict)
 
-    # Ensure the IDs are strings
-    user_ids = [str(uid) for uid in user_ids]
-    item_ids = [str(iid) for iid in item_ids]
+    model = RecommenderModel(num_users, num_items, embedding_dim).to(device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+    criterion = nn.BCEWithLogitsLoss()
 
-    # Create user and item models
-    user_model = tf.keras.Sequential([
-        tf.keras.layers.StringLookup(vocabulary=user_ids, mask_token=None),
-        tf.keras.layers.Embedding(len(user_ids) + 1, embedding_dim)
-    ])
+    train_dataset = InteractionDataset(train_data, user_col, item_col, rating_col)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
 
-    item_model = tf.keras.Sequential([
-        tf.keras.layers.StringLookup(vocabulary=item_ids, mask_token=None),
-        tf.keras.layers.Embedding(len(item_ids) + 1, embedding_dim)
-    ])
+    best_val_loss = float('inf')
+    patience_counter = 0
 
-    # Create and compile model
-    model = RecommenderModel(user_model, item_model)
-    model.compile(optimizer=tf.keras.optimizers.Adagrad(0.1))
+    for epoch in range(max_epochs):
+        print(f"Epoch {epoch + 1}/{max_epochs}")
+        model.train()
+        epoch_loss = 0
 
-    # Create training data generator
-    def data_generator():
-        while True:
-            for user in interactions.index:
-                user_items = interactions.loc[user]
-                positive_items = user_items[user_items > 0].index
-                if len(positive_items) > 0:
-                    for item in positive_items:
-                        yield {
-                            "user_id": str(user),
-                            "item_id": str(item)
-                        }
+        with tqdm(train_loader, unit="batch") as tepoch:
+            for batch in tepoch:
+                user_ids, item_ids, labels = batch
+                user_ids = user_ids.to(device)
+                item_ids = item_ids.to(device)
+                labels = labels.to(device)
 
-    # Create dataset
-    dataset = tf.data.Dataset.from_generator(
-        data_generator,
-        output_signature={
-            "user_id": tf.TensorSpec(shape=(), dtype=tf.string),
-            "item_id": tf.TensorSpec(shape=(), dtype=tf.string)
-        }
-    )
+                optimizer.zero_grad()
+                outputs = model(user_ids, item_ids)
+                loss = criterion(outputs, labels.float().unsqueeze(1))
+                loss.backward()
+                optimizer.step()
 
-    n_positive = sum(interactions.values > 0).sum()
-    steps_per_epoch = n_positive // batch_size
+                epoch_loss += loss.item()
+                tepoch.set_postfix(loss=loss.item())
 
-    dataset = dataset.shuffle(10000).batch(batch_size).cache()
-    model.fit(dataset, epochs=epoch, steps_per_epoch=steps_per_epoch)
+        print(f"Epoch {epoch + 1}/{max_epochs}, Average Loss: {epoch_loss / len(train_loader):.4f}")
+
+        # Evaluate on validation set
+        val_loss = evaluate_model(model, val_data, user_col, item_col, rating_col, device=device)
+        print(f"Validation Loss: {val_loss:.4f}")
+
+        # Early stopping logic
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            patience_counter = 0
+        else:
+            patience_counter += 1
+            if patience_counter >= patience:
+                print(f"Early stopping at epoch {epoch + 1}")
+                break
 
     return model
+
+
+def evaluate_model(model, data, user_col, item_col, rating_col, device="cpu"):
+    model.eval()
+    dataset = InteractionDataset(data, user_col, item_col, rating_col)
+    test_loader = DataLoader(dataset, batch_size=128, shuffle=False)
+
+    criterion = nn.BCEWithLogitsLoss()
+    total_loss = 0
+    with torch.no_grad():
+        for batch in test_loader:
+            user_ids, item_ids, labels = batch
+            user_ids = user_ids.to(device)
+            item_ids = item_ids.to(device)
+            labels = labels.to(device)
+
+            outputs = model(user_ids, item_ids)
+            loss = criterion(outputs, labels.float().unsqueeze(1))
+            total_loss += loss.item()
+
+    return total_loss / len(test_loader)

@@ -1,116 +1,74 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import tensorflow as tf
-import os
+import torch
 from src.utils import (create_interaction_matrix, create_user_dict,
-                       create_item_dict, get_recs)
-
-# Load Data
-recdata = pd.read_csv('data/recdata.csv', index_col=0)
-recdata = recdata.rename(columns={'variable': 'id', 'value': 'owned'})
-gamesdata = pd.read_csv('data/gamesdata.csv', index_col=0)
-numgames = pd.read_csv('data/numgames.csv', header=None, names=['uid', 'user_id', 'items_count'])
-
-# Create user number to user_id name mapping
-user_mapping = dict(zip(numgames['uid'], numgames['user_id']))
-
-interactions, user_ids, item_ids = create_interaction_matrix(
-    df=recdata, user_col='uid', item_col='id', rating_col='owned'
-)
-
-user_dict = create_user_dict(user_ids)
-games_dict = create_item_dict(gamesdata, 'id', 'title')
-
-models_dir = 'models'
-user_embeddings = np.load(os.path.join(models_dir, 'user_embeddings.npy'))
-item_embeddings = np.load(os.path.join(models_dir, 'item_embeddings.npy'))
-embedding_dim = np.load(os.path.join(models_dir, 'embedding_dim.npy'))[0]
-
-user_embedding_layer = tf.keras.layers.Embedding(
-    input_dim=user_embeddings.shape[0],
-    output_dim=embedding_dim,
-    embeddings_initializer=tf.keras.initializers.Constant(user_embeddings),
-    trainable=False
-)
-
-item_embedding_layer = tf.keras.layers.Embedding(
-    input_dim=item_embeddings.shape[0],
-    output_dim=embedding_dim,
-    embeddings_initializer=tf.keras.initializers.Constant(item_embeddings),
-    trainable=False
-)
-
-user_model = tf.keras.Sequential([
-    tf.keras.layers.StringLookup(vocabulary=[str(x) for x in user_ids], mask_token=None),
-    user_embedding_layer
-])
-
-item_model = tf.keras.Sequential([
-    tf.keras.layers.StringLookup(vocabulary=[str(x) for x in item_ids], mask_token=None),
-    item_embedding_layer
-])
+                       create_item_dict, load_model_and_embeddings, get_recs)
 
 
-class SimpleRecommender:
-    def __init__(self, user_model, item_model):
-        self.user_model = user_model
-        self.item_model = item_model
+# Load data
+@st.cache_data
+def load_data():
+    recdata = pd.read_parquet('data/recdata.parquet')  # Read .parquet file
+    recdata = recdata.rename(columns={'variable': 'id', 'value': 'owned'})
+    gamesdata = pd.read_parquet('data/gamesdata.parquet')  # Read .parquet file
+    numgames = pd.read_parquet('data/numgames.parquet')  # Read .parquet file
+    return recdata, gamesdata, numgames
 
 
-recommender_model = SimpleRecommender(user_model, item_model)
+@st.cache_data
+def load_model():
+    models_dir = 'models'
+    device = torch.device("cpu")  # Force CPU usage
+    model = load_model_and_embeddings(models_dir, device)
+    return model
 
-# Streamlit UI
-st.title('Game Recommendation System')
 
-# Create reverse mapping from game title to ID
-title_to_id = {v: k for k, v in games_dict.items()}
+def main():
+    st.title("Game Recommendation System")
+    st.write("This app provides game recommendations based on user preferences.")
 
-# Sidebar with two tabs
-tab1, tab2 = st.tabs(["User-based Recommendations", "Game-based Recommendations"])
+    recdata, gamesdata, numgames = load_data()
 
-with tab1:
-    user_options = [f"User {user_mapping[uid]}" for uid in sorted(user_ids)]
-    selected_user = st.selectbox('Select User', user_options)
-    user_id = next(uid for uid, name in user_mapping.items() if name == selected_user.split()[1])
+    interactions, user_ids, item_ids = create_interaction_matrix(df=recdata, user_col='uid', item_col='id',
+                                                                 rating_col='owned')
+    user_dict = create_user_dict(user_ids)
+    games_dict = create_item_dict(df=gamesdata, id_col='id', name_col='title')
 
-    if st.button('Get User Recommendations'):
-        recommendations = get_recs(
-            model=recommender_model,
-            user_id=user_id,
-            item_ids=item_ids,
-            item_dict=games_dict,
-            num_items=5
-        )
+    # Handle numgames: the first column is unnamed (uid), and the second column is the id to display
+    # Check the number of columns in numgames
+    if len(numgames.columns) >= 2:
+        # Rename the first two columns
+        numgames.columns = ['uid', 'user_id'] + list(numgames.columns[2:])
+    else:
+        st.error("The 'numgames.parquet' file must have at least two columns.")
+        return
 
-        st.write(f"Recommendations for {selected_user}:")
-        for idx, game in enumerate(recommendations, 1):
-            st.write(f"{idx}. {game}")
+    # Map uid to user_id using numgames
+    uid_to_user_id = dict(zip(numgames['uid'], numgames['user_id']))
 
-with tab2:
-    try:
-        game_titles = sorted(games_dict.values(), key=str)  # Convert all values to string before sorting
-    except TypeError as e:
-        st.error(f"Error occurred while sorting games: {e}")
-        game_titles = []
-    selected_games = st.multiselect('Select Games', game_titles)
+    # Load PyTorch model
+    model = load_model()
 
-    if st.button('Get Similar Games') and selected_games:
-        similar_games = set()
-        for game in selected_games:
-            game_id = title_to_id[game]
-            recs = get_recs(
-                model=recommender_model,
-                user_id=game_id,  # Using game_id as user_id for similarity
-                item_ids=item_ids,
-                item_dict=games_dict,
-                num_items=3
-            )
-            similar_games.update(recs)
+    # Sidebar for user input
+    st.sidebar.header("User Input")
 
-        # Remove selected games from recommendations
-        similar_games = similar_games - set(selected_games)
+    # Create a dropdown for user selection
+    user_ids_list = list(user_dict.keys())
+    user_id_display = [uid_to_user_id.get(uid, f"Unknown User ({uid})") for uid in user_ids_list]
+    selected_user_display = st.sidebar.selectbox("Select User", user_id_display)
 
-        st.write("Similar games:")
-        for idx, game in enumerate(similar_games, 1):
-            st.write(f"{idx}. {game}")
+    selected_uid = user_ids_list[user_id_display.index(selected_user_display)]
+
+    num_recs = st.sidebar.number_input("Number of Recommendations", min_value=1, max_value=20, value=5)
+
+    if st.sidebar.button("Get User Recommendations"):
+        st.subheader(f"Recommendations for User {selected_user_display}")
+        rec_list = get_recs(model=model, user_id=selected_uid, item_ids=item_ids, item_dict=games_dict,
+                            num_items=num_recs, device="cpu")
+        for i, rec in enumerate(rec_list, start=1):
+            st.write(f"{i}. {rec}")
+
+
+if __name__ == "__main__":
+    main()
