@@ -12,13 +12,12 @@ from tqdm import tqdm
 
 class ContentBasedDataset(Dataset):
     def __init__(self, features):
-        self.features = features  # Keep as sparse matrix
+        self.features = features
 
     def __len__(self):
         return self.features.shape[0]
 
     def __getitem__(self, idx):
-        # Convert only the required batch to dense
         start_idx = idx
         end_idx = start_idx + 1
         batch_dense = self.features[start_idx:end_idx].toarray()
@@ -41,32 +40,23 @@ class ContentBasedModel(nn.Module):
 
 def preprocess_data(gamesdata):
     print("Preprocessing data...")
-    # Fill missing values
     gamesdata['genres'] = gamesdata['genres'].fillna('').apply(lambda x: ' '.join(x) if isinstance(x, list) else x)
     gamesdata['tags'] = gamesdata['tags'].fillna('').apply(lambda x: x if isinstance(x, dict) else {})
     gamesdata['categories'] = gamesdata['categories'].fillna('').apply(
         lambda x: ' '.join(x) if isinstance(x, list) else x)
     gamesdata['developers'] = gamesdata['developers'].fillna('Unknown')
     gamesdata['metacritic_score'] = gamesdata['metacritic_score'].fillna(gamesdata['metacritic_score'].median())
-
-    # Handle positive and negative votes to derive sentiment
     gamesdata['total_votes'] = gamesdata['positive'] + gamesdata['negative']
     gamesdata['sentiment'] = (gamesdata['positive'] - gamesdata['negative']) / gamesdata['total_votes']
     gamesdata['sentiment'] = gamesdata['sentiment'].fillna(0)
-
-    # Normalize metacritic_score
     scaler = MinMaxScaler()
     normalized_score = scaler.fit_transform(gamesdata[['metacritic_score']])
-
-    # Combine textual features
     gamesdata['combined_text'] = gamesdata['genres'] + ' ' + gamesdata['categories']
 
-    # TF-IDF with reduced features
     print("Applying TF-IDF to combined text...")
     tfidf = TfidfVectorizer(max_features=200)  # Reduced from 500
     tfidf_features = tfidf.fit_transform(gamesdata['combined_text'])
 
-    # Memory-efficient one-hot encoding for developers
     print("One-hot encoding developers column...")
     unique_developers = gamesdata['developers'].unique()
     developer_to_idx = {dev: idx for idx, dev in enumerate(unique_developers)}
@@ -78,7 +68,6 @@ def preprocess_data(gamesdata):
     developers_encoded = csr_matrix((data, (rows, cols)),
                                     shape=(len(gamesdata), len(unique_developers)))
 
-    # Process tags more efficiently
     print("Processing tags with player votes...")
     all_tags = set()
     for tag_dict in gamesdata['tags']:
@@ -86,7 +75,6 @@ def preprocess_data(gamesdata):
             all_tags.update(tag_dict.keys())
     all_tags = list(all_tags)
 
-    # Create sparse matrix for tags
     tag_rows = []
     tag_cols = []
     tag_data = []
@@ -102,30 +90,27 @@ def preprocess_data(gamesdata):
     tags_features = csr_matrix((tag_data, (tag_rows, tag_cols)),
                                shape=(len(gamesdata), len(all_tags)))
 
-    # Normalize tag features using sparse operations
     if len(all_tags) > 0:
         tag_max = tags_features.max()
         if tag_max != 0:
             tags_features = tags_features / tag_max
 
-    # Convert sentiment and metacritic_score to sparse matrices
     sentiment = csr_matrix(gamesdata[['sentiment']].values)
     metacritic_score = csr_matrix(normalized_score)
 
-    # Combine all features (keeping everything sparse)
     print("Combining all features...")
     if len(all_tags) > 0:
         features = hstack([
-            tfidf_features * 1.5,
-            developers_encoded * 0.5,
+            tfidf_features * 1.8,
+            developers_encoded * 0.9,
             sentiment * 1.0,
             metacritic_score * 1.0,
             tags_features * 1.2
         ], format='csr')
     else:
         features = hstack([
-            tfidf_features * 1.5,
-            developers_encoded * 0.5,
+            tfidf_features * 1.8,
+            developers_encoded * 0.9,
             sentiment * 1.0,
             metacritic_score * 1.0
         ], format='csr')
