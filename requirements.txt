@@ -1,8 +1,8 @@
-pandas~=2.2.3
-numpy~=1.26.4
-tensorflow~=2.18.0
-scipy~=1.13.1
-scikit-learn~=1.6.0
-matplotlib~=3.10.0
-gensim~=4.3.3
-streamlit~=1.41.1
+pandas
+numpy
+scipy
+scikit-learn
+matplotlib
+gensim
+streamlit
+torch
