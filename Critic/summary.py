@@ -1,58 +1,160 @@
 import logging
 import re
-from transformers import pipeline
+import torch
+from transformers import pipeline, AutoTokenizer
+from nltk.tokenize import sent_tokenize
+import numpy as np
+from sklearn.feature_extraction.text import TfidfVectorizer
 
 device_id = 0
 
 
-def summarize_text(text, summarizer=None):
+def preprocess_text(text):
+    """Clean and prepare text for summarization."""
+    # Remove multiple newlines and spaces
+    text = re.sub(r'\n+', '\n', text)
+    text = re.sub(r'\s+', ' ', text)
+
+    # Remove common review boilerplate
+    text = re.sub(r'reviewed on \w+', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'review copy provided by.*', '', text, flags=re.IGNORECASE)
+
+    return text.strip()
+
+
+def get_key_sentences(text, n=3):
+    """Extract key sentences using TF-IDF."""
+    sentences = sent_tokenize(text)
+    if len(sentences) <= n:
+        return sentences
+
+    # Calculate TF-IDF scores
+    vectorizer = TfidfVectorizer(stop_words='english')
+    tfidf_matrix = vectorizer.fit_transform(sentences)
+
+    # Get average TF-IDF score for each sentence
+    sentence_scores = np.array([tfidf_matrix[i].mean() for i in range(len(sentences))])
+
+    # Get indices of top n sentences
+    top_indices = sentence_scores.argsort()[-n:][::-1]
+
+    return [sentences[i] for i in sorted(top_indices)]
+
+
+def chunk_text_semantic(text, max_length):
+    """Split text into semantic chunks."""
+    sentences = sent_tokenize(text)
+    chunks = []
+    current_chunk = []
+    current_length = 0
+
+    for sentence in sentences:
+        sentence_length = len(sentence.split())
+
+        if current_length + sentence_length > max_length and current_chunk:
+            chunks.append(' '.join(current_chunk))
+            current_chunk = [sentence]
+            current_length = sentence_length
+        else:
+            current_chunk.append(sentence)
+            current_length += sentence_length
+
+    if current_chunk:
+        chunks.append(' '.join(current_chunk))
+
+    return chunks
+
+
+def remove_redundancy(summary):
+    """Remove redundant information from summary."""
+    sentences = sent_tokenize(summary)
+    if len(sentences) <= 1:
+        return summary
+
+    # Calculate sentence similarities using TF-IDF
+    vectorizer = TfidfVectorizer(stop_words='english')
+    tfidf_matrix = vectorizer.fit_transform(sentences)
+
+    # Calculate pairwise similarities
+    similarity_matrix = (tfidf_matrix * tfidf_matrix.T).toarray()
+
+    # Keep sentences with low similarity to previous ones
+    unique_sentences = [sentences[0]]
+    for i in range(1, len(sentences)):
+        max_similarity = max(similarity_matrix[i][:i])
+        if max_similarity < 0.7:  # Threshold for similarity
+            unique_sentences.append(sentences[i])
+
+    return ' '.join(unique_sentences)
+
+
+def summarize_text(text, summarizer=None, max_summary_length=150):
     """
-    Summarizes the given text using a pretrained summarization model.
-    If the text is too long for the model (i.e. more tokens than the maximum input length),
-    the text is split into chunks, each chunk is summarized, and the summaries are combined.
+    Enhanced text summarization with semantic chunking and redundancy removal.
     """
     if summarizer is None:
-        summarizer = pipeline("summarization", model="t5-small", tokenizer="t5-small", device=device_id)
+        summarizer = pipeline(
+            "summarization",
+            model="facebook/bart-large-cnn",  # Using a better model
+            tokenizer="facebook/bart-large-cnn",
+            device=device_id,
+            torch_dtype=torch.float16  # Use fp16 for memory efficiency
+        )
+
     try:
-        tokenizer = summarizer.tokenizer
-        max_input_length = tokenizer.model_max_length  # e.g., 512 tokens for T5-small
-        inputs = tokenizer(text, return_tensors="pt", truncation=False)
-        input_length = inputs.input_ids.shape[1]
+        # Preprocess text
+        text = preprocess_text(text)
 
-        if input_length <= max_input_length:
-            summary = summarizer(text, max_length=150, min_length=40, do_sample=False)
-            return summary[0]['summary_text']
+        # Get tokenizer max length
+        max_input_length = summarizer.tokenizer.model_max_length
+
+        # Generate summary based on text length
+        if len(text.split()) <= max_input_length:
+            summary = summarizer(
+                text,
+                max_length=max_summary_length,
+                min_length=30,
+                do_sample=False
+            )[0]['summary_text']
         else:
-            # Split text into chunks by sentences
-            sentences = re.split(r'(?<=[.?!])\s+', text)
-            chunks = []
-            current_chunk = ""
-            for sentence in sentences:
-                test_chunk = current_chunk + " " + sentence if current_chunk else sentence
-                test_tokens = tokenizer.encode(test_chunk, add_special_tokens=True)
-                if len(test_tokens) <= max_input_length:
-                    current_chunk = test_chunk
-                else:
-                    if current_chunk:
-                        chunks.append(current_chunk)
-                    current_chunk = sentence
-            if current_chunk:
-                chunks.append(current_chunk)
+            # Split into semantic chunks
+            chunks = chunk_text_semantic(text, max_input_length)
 
-            # Summarize each chunk and combine summaries
-            summaries = []
+            # Summarize each chunk
+            chunk_summaries = []
             for chunk in chunks:
-                summ = summarizer(chunk, max_length=150, min_length=40, do_sample=False)
-                summaries.append(summ[0]['summary_text'])
-            combined_summary = " ".join(summaries)
+                summary = summarizer(
+                    chunk,
+                    max_length=max_summary_length // len(chunks),
+                    min_length=20,
+                    do_sample=False
+                )[0]['summary_text']
+                chunk_summaries.append(summary)
 
-            # Re-summarize if necessary
-            inputs_combined = tokenizer(combined_summary, return_tensors="pt", truncation=False)
-            if inputs_combined.input_ids.shape[1] > max_input_length:
-                final_summary = summarizer(combined_summary, max_length=150, min_length=40, do_sample=False)
-                return final_summary[0]['summary_text']
+            # Combine summaries
+            combined_summary = ' '.join(chunk_summaries)
+
+            # If combined summary is too long, summarize again
+            if len(combined_summary.split()) > max_summary_length:
+                summary = summarizer(
+                    combined_summary,
+                    max_length=max_summary_length,
+                    min_length=30,
+                    do_sample=False
+                )[0]['summary_text']
             else:
-                return combined_summary
+                summary = combined_summary
+
+        # Remove redundancy
+        summary = remove_redundancy(summary)
+
+        # Add key sentences if summary is too short
+        if len(summary.split()) < 50:
+            key_sentences = get_key_sentences(text)
+            summary = summary + ' ' + ' '.join(key_sentences)
+
+        return summary.strip()
+
     except Exception as e:
-        logging.error(f"Summarization error: {e}")
+        logging.error(f"Summarization error: {str(e)}")
         return ""

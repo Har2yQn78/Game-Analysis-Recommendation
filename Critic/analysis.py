@@ -1,37 +1,49 @@
 import logging
 import pandas as pd
-from transformers import AutoTokenizer, AutoModelForSequenceClassification, pipeline
 import torch
+from transformers import AutoTokenizer, AutoModelForSequenceClassification, pipeline
+import numpy as np
 
 from scrape import scrape_critic_reviews
 from clean import clean_review_data
 from sentiment import find_aspects
 from summary import summarize_text
 
-# Set the device id (adjust if needed)
 device_id = 0
+
+
+def weighted_average(scores, weights):
+    """Calculate weighted average of scores."""
+    return np.average(scores, weights=weights) if len(scores) > 0 else 0.0
 
 
 def comment_analysis_with_summary(game_name, aspects, headers=None):
     """
-    Performs the following steps:
-      1. Loads the ABSA model and a T5-small summarizer.
-      2. Scrapes critic reviews for the game.
-      3. Cleans the review data.
-      4. For each review, computes aspect sentiment scores.
-      5. Combines all review texts into one aggregated text and summarizes it.
-      6. Returns overall aspect scores (averaged over reviews), the combined summary, and the DataFrame.
+    Enhanced analysis pipeline with weighted scoring and confidence measures.
     """
     logging.info("Loading ABSA model for aspect analysis...")
     model_name_absa = "yangheng/deberta-v3-base-absa-v1.1"
     tokenizer_absa = AutoTokenizer.from_pretrained(model_name_absa, use_fast=False)
-    model_absa = AutoModelForSequenceClassification.from_pretrained(model_name_absa, torch_dtype=torch.float16).to(
-        "cuda")
-    classifier = pipeline("text-classification", model=model_absa, tokenizer=tokenizer_absa, device=device_id)
+    model_absa = AutoModelForSequenceClassification.from_pretrained(
+        model_name_absa,
+        torch_dtype=torch.float16
+    ).to("cuda")
+    classifier = pipeline(
+        "text-classification",
+        model=model_absa,
+        tokenizer=tokenizer_absa,
+        device=device_id
+    )
     logging.info("ABSA model loaded on GPU.")
 
-    logging.info("Initializing summarization pipeline (T5-small)...")
-    summarizer = pipeline("summarization", model="t5-small", tokenizer="t5-small", device=device_id)
+    logging.info("Initializing summarization pipeline...")
+    summarizer = pipeline(
+        "summarization",
+        model="facebook/bart-large-cnn",
+        tokenizer="facebook/bart-large-cnn",
+        device=device_id,
+        torch_dtype=torch.float16
+    )
     logging.info("Summarization model loaded on GPU.")
 
     logging.info("Scraping critic reviews...")
@@ -43,18 +55,45 @@ def comment_analysis_with_summary(game_name, aspects, headers=None):
     logging.info("Cleaning review data...")
     df_reviews = clean_review_data(df_reviews)
 
-    logging.info("Performing aspect-based sentiment analysis...")
-    # Compute aspect scores for each review and average them for overall scores
-    scores_df = df_reviews['review_text'].apply(lambda x: pd.Series(find_aspects(x, aspects, classifier=classifier)))
-    df_reviews = pd.concat([df_reviews, scores_df], axis=1)
-    logging.info("Aspect analysis complete!")
+    logging.info("Performing enhanced aspect-based sentiment analysis...")
+    # Compute aspect scores with confidence for each review
+    scores_list = []
+    for text in df_reviews['review_text']:
+        scores = find_aspects(text, aspects, classifier=classifier)
+        scores_list.append(scores)
 
-    # Combine all review texts into one aggregated text
-    combined_text = "\n\n".join(df_reviews['review_text'].tolist())
+    # Convert scores to DataFrame columns
+    for aspect in aspects:
+        df_reviews[f'{aspect}_score'] = [s[aspect]['score'] for s in scores_list]
+        df_reviews[f'{aspect}_confidence'] = [s[aspect]['confidence'] for s in scores_list]
+        df_reviews[f'{aspect}_mentions'] = [s[aspect]['mention_count'] for s in scores_list]
+
+    # Calculate weighted average scores
+    overall_aspect_scores = {}
+    for aspect in aspects:
+        scores = df_reviews[f'{aspect}_score']
+        confidences = df_reviews[f'{aspect}_confidence']
+        mentions = df_reviews[f'{aspect}_mentions']
+
+        # Combine confidence and mention count for weighting
+        weights = confidences * (mentions + 1)  # Add 1 to avoid zero weights
+
+        overall_aspect_scores[aspect] = {
+            'score': weighted_average(scores, weights),
+            'confidence': np.mean(confidences),
+            'total_mentions': sum(mentions)
+        }
+
     logging.info("Generating overall summary from combined reviews...")
-    overall_summary = summarize_text(combined_text, summarizer=summarizer)
-    logging.info("Overall summarization complete!")
+    # Prioritize reviews with higher confidence scores for summary
+    weighted_texts = []
+    for _, row in df_reviews.iterrows():
+        avg_confidence = np.mean([row[f'{aspect}_confidence'] for aspect in aspects])
+        if avg_confidence > 0.5:  # Only include reviews with decent confidence
+            weighted_texts.append(row['review_text'])
 
-    overall_aspect_scores = scores_df.mean().to_dict()  # Averaging scores for better interpretability
+    combined_text = "\n\n".join(weighted_texts)
+    overall_summary = summarize_text(combined_text, summarizer=summarizer)
+    logging.info("Analysis complete!")
 
     return overall_aspect_scores, overall_summary, df_reviews
