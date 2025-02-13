@@ -10,3 +10,4 @@ transformers
 sentencepiece
 langdetect
 selenium
+openai
