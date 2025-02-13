@@ -16,7 +16,7 @@ st.write("Enter a game name and select the aspects you want to analyze using Ope
 with st.sidebar:
     st.header("Analysis Settings")
     default_game = "Red Dead Redemption 2"
-    default_aspects = ["graphics", "gameplay", "story"]
+    default_aspects = ["graphics", "gameplay", "story", "performance"]
 
     game_name = st.text_input("Enter game name:", default_game)
     aspects = st.multiselect(
