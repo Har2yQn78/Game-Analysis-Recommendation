@@ -5,7 +5,6 @@ import requests
 import pandas as pd
 from bs4 import BeautifulSoup
 
-# Enhanced logging configuration
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -13,13 +12,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-
 def perform_random_delay(delay=3, random_offset=0.5):
     """Pause execution for a short randomized delay."""
     actual_delay = delay + random.uniform(0, random_offset)
     logger.debug(f"Waiting for {actual_delay:.2f} seconds")
     time.sleep(actual_delay)
-
 
 def extract_ign_review(soup):
     """Extract review text from an IGN page."""
@@ -37,7 +34,6 @@ def extract_ign_review(soup):
     logger.warning("No review content found in IGN page")
     return None
 
-
 def extract_pcgamer_review(soup):
     """Extract review text from a PCGamer page."""
     logger.debug("Attempting to extract PCGamer review")
@@ -53,7 +49,6 @@ def extract_pcgamer_review(soup):
         return "\n".join(texts)
     logger.warning("No review content found in PCGamer page")
     return None
-
 
 def extract_eurogamer_review(soup):
     """Extract review text from a Eurogamer page."""
@@ -71,7 +66,6 @@ def extract_eurogamer_review(soup):
     logger.warning("No review content found in Eurogamer page")
     return None
 
-
 def extract_vg247_review(soup):
     """Extract review text from a VG247 page."""
     logger.debug("Attempting to extract VG247 review")
@@ -88,10 +82,40 @@ def extract_vg247_review(soup):
     logger.warning("No review content found in VG247 page")
     return None
 
+def extract_gamesradar_review(soup):
+    """Extract review text from a GamesRadar page."""
+    logger.debug("Attempting to extract GamesRadar review")
+    # Look for the container with id "article-body"
+    container = soup.find("div", {"id": "article-body"})
+    if container is None:
+        logger.debug("GamesRadar primary container not found")
+        return None
+    elements = container.find_all(['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'])
+    texts = [elem.get_text(separator=" ", strip=True) for elem in elements if elem.get_text(strip=True)]
+    text_length = sum(len(t) for t in texts)
+    logger.info(f"Successfully extracted GamesRadar review with {text_length} characters")
+    return "\n".join(texts)
+
+def extract_gamerant_review(soup):
+    """Extract review text from a GameRant page."""
+    logger.debug("Attempting to extract GameRant review")
+    # Look for the section with id "article-body"
+    container = soup.find("section", {"id": "article-body"})
+    if container is None:
+        logger.debug("GameRant primary container not found, trying fallback")
+        container = soup.find("div", {"id": "article-body"})
+    if container:
+        elements = container.find_all(['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'])
+        texts = [elem.get_text(separator=" ", strip=True) for elem in elements if elem.get_text(strip=True)]
+        text_length = sum(len(t) for t in texts)
+        logger.info(f"Successfully extracted GameRant review with {text_length} characters")
+        return "\n".join(texts)
+    logger.warning("No review content found in GameRant page")
+    return None
 
 def scrape_critic_reviews(game_name, headers=None):
     """
-    Scrapes critic reviews for a given game from four websites.
+    Scrapes critic reviews for a given game from six websites.
     Returns a DataFrame with columns: 'website', 'review_text', 'url'.
     """
     logger.info(f"Starting review scraping for game: {game_name}")
@@ -119,6 +143,14 @@ def scrape_critic_reviews(game_name, headers=None):
         "VG247": {
             "url": "https://www.vg247.com/{slug}-review/",
             "extractor": extract_vg247_review
+        },
+        "GameRant": {
+            "url": "https://gamerant.com/{slug}-review/",
+            "extractor": extract_gamerant_review
+        },
+        "GamesRadar": {
+            "url": "https://www.gamesradar.com/{slug}-review/",
+            "extractor": extract_gamesradar_review
         }
     }
 

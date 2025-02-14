@@ -8,8 +8,8 @@ This project combines game recommendations with detailed critic reviews to provi
 ```
 Game-Analysis-Recommendation/
 ├── GRS/                    # Game Recommendation System
-│   ├── src/               # Source code for recommendation engine
-│   └── models/            # Trained models
+│   ├── train               # train code for Recommendation System
+│   └── app                 # Streamlit app for Recommendation System
 ├── Critic/                # Critic Review System
 │   ├── scrapers/         # Web scrapers for gaming sites
 │   └── analysis/         # Review analysis and scoring
@@ -40,22 +40,16 @@ jupyter notebook GRS/Data_preprocess_and_visualization.ipynb
 ```
 
 5. **Train the models:**
-   - For Collaborative Filtering:
+   - For training model:
    ```sh
-   python GRS/src/train.py
-   ```
-   - For Content-Based Recommendation:
-   ```sh
-   python GRS/src/trainCB.py
-   ```
+   python GRS/train.py
+    ```
 
 ## Features
 
 ### Game Recommendation System (GRS)
-- Collaborative filtering-based game suggestions
 - Content-based recommendations using game attributes
-- Personalized recommendations based on user's game library
-- Integration with Steam user data
+
 
 ### Critic Review System
 - Aggregated reviews from major gaming websites:
@@ -70,7 +64,8 @@ jupyter notebook GRS/Data_preprocess_and_visualization.ipynb
 - Review summaries for quick insights
 
 ### Web Interface
-![Critic Score Interface](Critic/CriticScreenshot.jpg)
+![Critic Summery Interface](Critic/screenshots/CriticScreenshot.jpg)
+![Critic Score Interface](Critic/screenshots/CriticScreenshot2.jpg)
 *Screenshot of the Critic Score interface showing detailed game analysis*
 
 ## Usage Instructions
@@ -80,9 +75,8 @@ streamlit run app/main.py
 ```
 
 2. **Using the Recommendation System:**
-   - Input your Steam username or manually select games
-   - View personalized game recommendations
-   - Filter recommendations by genre, release date, etc.
+   - Input your Game name
+   - View game recommendations
 
 3. **Using the Critic Review System:**
    - Search for a specific game

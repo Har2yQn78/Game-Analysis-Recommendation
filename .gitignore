@@ -1,4 +1,6 @@
 .venv/
 Critic/.ipynb_checkpoints/
 GRS/data/
-CriticLLM/.env
+Critic/.env
+GRS/game_recommendation_model.pth
+GRS/vocabularies.pkl
