@@ -35,9 +35,9 @@ def combined_analysis(text, aspects):
         "Read the following review text carefully and perform the following tasks:\n\n"
         "1. **Comprehensive Summary:** Provide a comprehensive summary of the review that includes:\n"
         "   - **Overall Summary:** A detailed summary of the review covering general impressions, context, and main points. "
-        "Ensure this summary is approximately 350-500 words.\n"
+        "Ensure this summary is approximately 200-350 words.\n"
         "   - **Technical Summary:** A concise summary of technical details (such as performance metrics, system insights, etc.) "
-        "in about 40-70 words.\n"
+        "in about 20-50 words.\n"
         f"   - **Aspect-Specific Summaries:** For the following aspects ({aspects_list}), provide a brief summary of the review points "
         "related to each aspect in about 20-50 words:\n"
     )
@@ -50,11 +50,11 @@ def combined_analysis(text, aspects):
         "Return your answer ONLY as valid JSON (with no additional commentary) using the exact format shown in the example below:\n\n"
         "{\n"
         '  "summary": {\n'
-        '    "overall": "Detailed overall summary of the review (approximately 350-500 words).",\n'
-        '    "technical": "Concise summary of technical aspects (approximately 40-70 words).",\n'
+        '    "overall": "Detailed overall summary of the review (approximately 200-350 words).",\n'
+        '    "technical": "Concise summary of technical aspects (approximately 20-50 words).",\n'
     )
     for aspect in aspects:
-        prompt += f'    "{aspect}": "Brief summary for {aspect} (approximately 40-70 words).",\n'
+        prompt += f'    "{aspect}": "Brief summary for {aspect} (approximately 20-50 words).",\n'
     prompt += (
         "  },\n"
         '  "overall": {"score": 8.0, "explanation": "Overall evaluation of the review."},\n'
@@ -79,6 +79,7 @@ def combined_analysis(text, aspects):
         )
         response_text = completion.choices[0].message.content.strip()
         logger.info(f"LLM combined analysis raw response: {response_text}")
+
 
         match = re.search(r"```json(.*?)```", response_text, re.DOTALL)
         if match:
