@@ -18,45 +18,43 @@ client = OpenAI(
 )
 
 
-def combined_analysis(text, aspects, max_summary_length=450):
+def combined_analysis(text, aspects):
     """
     Constructs a prompt that instructs the LLM to:
-      1. Provide a comprehensive summary of the review that includes overall impressions,
-         technical details (performance and system insights), and aspect-specific summaries.
-         The summary should be structured as a JSON object under the "summary" key with sub-keys:
-           - "overall": A brief overall summary.
-           - "technical": A summary of technical and performance aspects.
-           - And, for each specified aspect (e.g. graphics, gameplay, story, performance), a corresponding summary.
+      1. Provide a comprehensive summary of the review that includes:
+         - A detailed overall summary (~200-350 words) covering general impressions.
+         - A technical summary (~20-50 words) focusing on performance metrics, system insights, and other technical details.
+         - Brief aspect-specific summaries (~20-50 words each) for the specified aspects.
       2. Provide an aspect-based evaluation by assigning scores (0 to 10) with brief explanations.
-    The response must be returned as valid JSON using the format shown in the example.
+    The response must be returned as valid JSON using the exact format shown in the example.
     """
     aspects_list = ", ".join(aspects)
 
     prompt = (
-            "You are an expert video game journalist.\n\n"
-            "Read the following review text carefully and perform the following tasks:\n\n"
-            "1. **Comprehensive Summary:** Provide a comprehensive summary of the review that covers:\n"
-            "   - Overall impressions of the review.\n"
-            "   - Technical details such as performance metrics, system performance, and other technical insights.\n"
-            "   - Aspect-specific points for the following aspects: " + aspects_list + ".\n"
-                                                                                       "   Structure your summary as a JSON object under the \"summary\" key with the following sub-keys:\n"
-                                                                                       "      \"overall\": A brief overall summary covering the review as a whole.\n"
-                                                                                       "      \"technical\": A summary focusing on performance and technical insights.\n"
+        "You are an expert video game journalist.\n\n"
+        "Read the following review text carefully and perform the following tasks:\n\n"
+        "1. **Comprehensive Summary:** Provide a comprehensive summary of the review that includes:\n"
+        "   - **Overall Summary:** A detailed summary of the review covering general impressions, context, and main points. "
+        "Ensure this summary is approximately 350-500 words.\n"
+        "   - **Technical Summary:** A concise summary of technical details (such as performance metrics, system insights, etc.) "
+        "in about 40-70 words.\n"
+        f"   - **Aspect-Specific Summaries:** For the following aspects ({aspects_list}), provide a brief summary of the review points "
+        "related to each aspect in about 20-50 words:\n"
     )
     for aspect in aspects:
-        prompt += f'      "{aspect}\": A short summary of review points for {aspect}.\n'
+        prompt += f'      - "{aspect}"\n'
+
     prompt += (
-        f"   Keep the entire summary under {max_summary_length} words.\n\n"
-        "2. **Aspect-Based Analysis:** Evaluate the review by assigning scores on a scale from 0 (very negative) to 10 (very positive).\n"
-        "   Provide an overall score and individual scores for each specified aspect. For each, include a brief explanation.\n\n"
+        "\n2. **Aspect-Based Evaluation:** Evaluate the review by assigning scores on a scale from 0 (very negative) to 10 (very positive). "
+        "Provide an overall score and individual scores for each specified aspect. For each, include a brief explanation.\n\n"
         "Return your answer ONLY as valid JSON (with no additional commentary) using the exact format shown in the example below:\n\n"
         "{\n"
         '  "summary": {\n'
-        '    "overall": "Overall summary of the review, covering general impressions, technical details, and aspects.",\n'
-        '    "technical": "Summary focusing on technical performance and system insights.",\n'
+        '    "overall": "Detailed overall summary of the review (approximately 350-500 words).",\n'
+        '    "technical": "Concise summary of technical aspects (approximately 40-70 words).",\n'
     )
     for aspect in aspects:
-        prompt += f'    "{aspect}": "Summary of review points for {aspect}.",\n'
+        prompt += f'    "{aspect}": "Brief summary for {aspect} (approximately 40-70 words).",\n'
     prompt += (
         "  },\n"
         '  "overall": {"score": 8.0, "explanation": "Overall evaluation of the review."},\n'
@@ -82,7 +80,6 @@ def combined_analysis(text, aspects, max_summary_length=450):
         response_text = completion.choices[0].message.content.strip()
         logger.info(f"LLM combined analysis raw response: {response_text}")
 
-        # Remove markdown code block formatting if present.
         match = re.search(r"```json(.*?)```", response_text, re.DOTALL)
         if match:
             response_text = match.group(1).strip()
