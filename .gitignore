@@ -2,5 +2,6 @@
 Critic/.ipynb_checkpoints/
 GRS/data/
 Critic/.env
+Chatbot/.env
 GRS/game_recommendation_model.pth
 GRS/vocabularies.pkl
