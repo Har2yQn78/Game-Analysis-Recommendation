@@ -2,7 +2,7 @@
 ## Project Description
 This project combines game recommendations with detailed critic reviews to provide comprehensive gaming insights. It consists of two main components:
 1. **GRS (Game Recommendation System)**: Suggests games to Steam users based on their current game library
-2. **Critic**: Aggregates and analyzes reviews from major gaming websites (IGN, Eurogamer, etc.) to provide detailed scoring across different aspects
+2. **Critic**: Use LLM API for aggregates and analyzes reviews from major gaming websites (IGN, Eurogamer, etc.) to provide detailed scoring across different aspects and give a overall summery
 
 ## Project Structure
 ```
